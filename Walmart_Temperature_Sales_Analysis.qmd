@@ -1,0 +1,261 @@
+---
+title: "Data Exploration Project: Walmart Sales"
+author: "Shalyne Kirui"
+date: "2026-02-20"
+format:
+  docx:
+    toc: true
+    number-sections: true
+execute:
+  echo: true
+  warning: false
+  message: false
+editor: visual
+---
+
+## Quarto
+
+Quarto enables you to weave together content and executable code into a finished document. To learn more about Quarto see <https://quarto.org>.
+
+## Running Code
+
+When you click the **Render** button a document will be generated that includes both content and the output of embedded code. You can embed code like this:
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(fixest)
+```
+
+1.  **Introduction**
+
+    Retail performance is influenced by many external factors. Because temperature directly affects consumer behavior , influencing store traffic, purchasing patterns, and seasonal demand , understanding its impact on sales is important for business planning.
+
+    In the short run, Walmart is interested in whether higher temperatures might negatively affect weekly sales across its stores. This analysis investigates the causal impact of temperature on weekly Walmart sales using data from 45 stores between 2010 and 2012.
+
+    The central research question is: **Do higher temperatures causally affect weekly sales?**
+
+2.  **Data Description and Data Generating Process and Justification of Variable Selection**
+
+    The dataset contains weekly sales information for 45 Walmart stores from February 2010 through October 2012. Each observation represents one store in one week. The primary **outcome variable** is Weekly_Sales, which measures total sales revenue for a given store during a specific week.
+
+    The main **treatment variable** of interest is Temperature, recorded as the average weekly temperature (in Fahrenheit) for the region associated with each store. The goal of this analysis is to estimate the causal effect of temperature (the treatment) on weekly sales (the outcome).
+
+    The dataset also includes several additional variables that may confound the relationship between temperature and sales and are therefore included as controls. These include:
+
+    **Holiday_Flag**, which indicates whether a given week includes a major holiday and captures predictable spikes in demand.
+
+    **Fuel_Price**, representing regional fuel costs that may affect consumer mobility and discretionary spending.
+
+    **CPI (Consumer Price Index)**, reflecting regional price levels and inflation that may influence purchasing power.
+
+    **Unemployment**, measuring local labor market conditions that may affect consumer income and spending behavior.
+
+    Because the Date variable is recorded in day-month-year format, I use the `lubridate` package to convert it into a proper date object and extract the year and month. These constructed time variables are used to control for seasonal patterns and time trends that may affect both temperature and sales.
+
+    I first started with understanding the data generating process. Temperature may influence sales directly. For example, very hot or very cold weeks might change how often people shop, what they buy, or how long they stay in stores. Because of this, temperature could reasonably impact weekly sales.
+
+    However, temperature does not change randomly. It follows seasonal patterns and differs across locations. Sales also follow seasonal patterns and differ across stores. If we ignore these patterns, we might mistakenly attribute normal seasonal or regional differences in sales to temperature.
+
+    ![](images/clipboard-3897197148.png)
+
+    The causal diagram highlights two key backdoor paths:
+
+    First, temperature changes throughout the year. Summer weeks are warmer and winter weeks are colder. Sales also change throughout the year due to holidays, back-to-school shopping, and other seasonal demand patterns. If we do not control for time effects, we could confuse normal seasonal sales changes with the effect of temperature.
+
+    Second, stores are located in different regions. Stores in warmer areas tend to experience higher average temperatures than stores in colder areas. At the same time, stores in different regions may have different customer demographics, income levels, and long-term demand patterns. If we compare warm-region stores to cold-region stores without accounting for location, we may incorrectly interpret regional differences as temperature effects.
+
+    To address these concerns, the regression includes:
+
+    -   **Store fixed effects**, which control for all permanent differences across stores, such as regional climate, demographics, and long-term demand.
+
+    -   **Time fixed effects (Year and Month)**, which control for seasonal patterns and overall time trends that affect both temperature and sales.
+
+    The model also includes additional control variables:
+
+    -   **Holiday_Flag**, because holiday weeks often experience large increases in sales.
+
+    -   **CPI, Unemployment, and Fuel Price**, which capture broader economic conditions. Economic factors affect consumers’ purchasing power and spending behavior, so including them helps ensure that the estimated temperature effect is not driven by general economic changes.
+
+3.  **Exploratory Data Analysis**
+
+    **3.1 Data Cleaning**
+
+```{r}
+# Load data
+walmart <- read_csv("Walmart_Sales.csv")
+
+walmart <- walmart %>%
+  mutate(
+    Date  = dmy(Date),                 # parse day-month-year correctly
+    Store = as.factor(Store),          # store ID for fixed effects
+    Holiday_Flag = as.integer(Holiday_Flag),
+    Year  = year(Date),
+    Month = month(Date),
+  )
+```
+
+3.2 **Sales and Temperature Distributions**
+
+```{r}
+ggplot(walmart, aes(x = Weekly_Sales)) +
+  geom_histogram(bins = 50) +
+  labs(title = "Distribution of Weekly Sales")
+
+ggplot(walmart, aes(x = Temperature)) +
+  geom_histogram(bins = 40) +
+  labs(title = "Distribution of Temperature")
+```
+
+As observed from our plots, the sales is rightly-skewed thus the need for transformation to allow the distribution to be more symmetric
+
+```{r}
+walmart <- walmart %>%
+  mutate(log_sales = log(Weekly_Sales))
+```
+
+3.2 **Time patterns(seasonality)**
+
+```{r}
+ggplot(walmart, aes(x = Date, y = Weekly_Sales, group = Store)) +
+  geom_line(alpha = 0.15) +
+  labs(title = "Weekly Sales Over Time (All Stores)")
+```
+
+3.3 **Raw relationship (Scatter diagram between weekly sales and temperature)**
+
+```{r}
+ggplot(walmart, aes(x = Temperature, y = Weekly_Sales)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "lm") +
+  labs(title = "Sales vs Temperature (Raw)")
+```
+
+The scatterplot shows the raw relationship between weekly sales and temperature. As observed, the data are highly dispersed, and while the fitted line suggests a slight negative relationship, the pattern is weak.
+
+However, this raw correlation does not control for seasonal effects, store differences, holidays, or economic conditions and because temperature and sales both vary by season, the raw relationship may reflect confounding seasonal effects rather than a true causal relationship. This motivates the use of fixed effects in the regression analysis.
+
+4.  **Regression Analysis**
+
+We estimate models in steps to show how the temperature coefficient changes as we control for confounding.\
+
+ 4.1 **Model 1: Baseline Model**
+
+```{r}
+m1 <- feols(Weekly_Sales ~ Temperature, data = walmart)
+etable(m1)
+```
+
+\
+ 4.2 **Model 2: Add controls (still no fixed effects)**
+
+```{r}
+m2 <- feols(
+  Weekly_Sales ~ Temperature + Holiday_Flag + Fuel_Price + CPI + Unemployment,
+  data = walmart
+)
+etable(m1,m2)
+```
+
+ 4.3 **Model 3: Adding Store Fixed Effects**
+
+```{r}
+m3 <- feols(
+  Weekly_Sales ~ Temperature + Holiday_Flag + Fuel_Price + CPI + Unemployment |
+    Store,
+  data = walmart
+)
+etable(m1,m2,m3)
+```
+
+4.4 **Model 4: Adding Time Fixed Effects**
+
+```{r}
+m4 <- feols(
+  Weekly_Sales ~ Temperature + Holiday_Flag + Fuel_Price + CPI + Unemployment |
+    Store + Year + Month,
+  data = walmart
+)
+etable(m1,m2,m3,m4)
+```
+
+4.5 **Main model (log sales + fixed effects + clustered SE)**
+
+We cluster standard errors at the store level because weekly observations within a store are likely correlated over time.
+
+This approach isolates variation in temperature within the same store across different weeks, reducing bias from unobserved confounding factors and strengthening the causal interpretation of the estimates.
+
+```{r}
+m_main <- feols(
+  log_sales ~ Temperature + Holiday_Flag + Fuel_Price + CPI + Unemployment |
+    Store + Year + Month,
+  cluster = ~Store,
+  data = walmart
+)
+etable(m1, m2, m3, m4, m_main)
+```
+
+5.  **Robustness Check**
+
+5.1 Non-Linear Temperature Effect, this tests whether the impact of temeperature changes at higher/lower temperatures
+
+```{r}
+m_quad <- feols(
+  log_sales ~ Temperature + I(Temperature^2) + Holiday_Flag |
+    Store + Year + Month,
+  cluster = ~Store,
+  data = walmart
+)
+etable(m_main, m_quad)
+```
+
+As a robustness check, I also allowed for nonlinearity with a quadratic term, which suggested an inverted-U pattern where sales rise with temperature at moderate levels but the effect weakens at higher temperatures. The positive coefficient on temperature and negative coefficient on temperature squared indicate that sales increase with temperature at lower levels but at a decreasing rate. The estimated turning point occurs around 68–70°F, suggesting that moderate temperatures are associated with slightly higher sales, while very high temperatures may reduce the marginal benefit. This indicates that the temperature-sales relationship is not strictly linear.
+
+5.2 **Lagged Temperature Effect (does last week's temperature matter?)**
+
+```{r}
+walmart <- walmart %>%
+  arrange(Store, Date) %>%
+  group_by(Store) %>%
+  mutate(temp_lag = lag(Temperature)) %>%
+  ungroup()
+
+m_lag <- feols(
+  log_sales ~ Temperature + temp_lag |
+    Store + Year + Month,
+  cluster = ~Store,
+  data = walmart
+)
+
+etable(m_main, m_lag)
+```
+
+**Does last week's temperature matter?**
+
+To examine whether temperature has a delayed effect on sales, I estimate a model that included both current and lagged temperature. The results show that current temperature remains positive and statistically significant, while the lagged temperature coefficient is small and not statistically significant. This suggests that temperature primarily affects sales in the same week rather than carrying over into the following week. In other words, consumers respond to current weather conditions rather than prior-week temperatures.
+
+6.  **Model Specification and Why This Model Is Appropriate**
+
+    The goal of this model is to estimate the causal effect of temperature on weekly Walmart sales while accounting for other factors that could influence this relationship. I use log(sales) as the dependent variable because weekly sales are highly skewed.
+
+    Temperature is the main independent variable of interest. To make sure that the estimated effect of temperature is not picking up other differences across stores, I include store fixed effects. These control for time-invariant characteristics such as location, store size, and customer base. I also include year and month fixed effects to account for seasonal patterns and broader time trends that affect all stores, such as inflation or nationwide economic conditions.
+
+    In addition, I control for Holiday_Flag, Fuel_Price, CPI, and Unemployment, since holidays and local economic conditions can influence consumer spending and may be correlated with temperature. Standard errors are clustered at the store level to account for the fact that observations within the same store over time are likely correlated.
+
+    Overall, this specification focuses on changes in temperature within the same store over time while holding other relevant factors constant. This approach strengthens the credibility of the causal interpretation of the estimated temperature effect.
+
+7.  **Interpretation of the Regression Results**
+
+    In the preferred specification with Log_sales and store and time fixed effects, a one-degree Fahrenheit increase in temperature,on average, is associated with approximately a 0.10% increase in weekly sales, holding seasonal patterns, store characteristics, holidays, and macroeconomic conditions constant.
+
+    Even though the estimate is statistically significant, the magnitude of this effect is economically small. Therefore, the results suggest that short-term temperature increases do not harm sales and may slightly increase them.
+
+8.  **Conclusion**
+
+    This analysis examined whether higher temperatures have a causal impact on weekly Walmart sales. Using a fixed effects regression framework that controls for store-specific characteristics, seasonal patterns, holidays, and broader economic conditions, the model isolates changes in temperature within the same store over time.
+
+    The results indicate that higher temperatures are associated with a small but statistically significant increase in weekly sales. Specifically, a one-degree Fahrenheit increase corresponds to approximately a 0.10% increase in sales.
+
+    From a business perspective, these findings suggest that rising temperatures are not a threat to weekly sales performance. Although the effect is statistically measurable, its magnitude is modest and unlikely to materially affect overall revenue.
+
+    Overall, the evidence does not support the idea that higher temperatures harm weekly Walmart sales in the short term. If anything, warmer weeks are associated with a slight increase in sales, though the economic impact remains small.
